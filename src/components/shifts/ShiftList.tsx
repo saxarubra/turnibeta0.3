@@ -5,7 +5,6 @@ import { useAuth } from '../../contexts/AuthContext';
 import PDFExport from './PDFExport';
 import { PDFDocument } from 'pdf-lib';
 import { format, addDays } from 'date-fns';
-import { sendGmailEmail } from '../../lib/gmailService';
 
 type Matrix = string[][];
 type SwapRequest = {
@@ -389,81 +388,30 @@ export default function ShiftList({ initialDate }: { initialDate?: string | null
     }
   };
 
-  const handleSwapRequest = async (fromDate: string, fromEmployee: string, toEmployee: string, fromShift: string, toShift: string) => {
-    if (isLoading) return;
-
+  const handleSwapRequest = async (shiftId: string) => {
     try {
-      setIsLoading(true);
-      setError(null);
-      console.log('Iniziando richiesta di scambio:', { fromDate, fromEmployee, toEmployee, fromShift, toShift });
+      const shift = swaps.find(s => s.id === shiftId);
+      if (!shift) return;
 
-      if (!isAdmin) {
-        if (fromShift === 'RI' || fromShift === 'NL' || toShift === 'RI' || toShift === 'NL') {
-          setError('Non è possibile scambiare i turni RI e NL');
-          return;
-        }
+      const swapData = {
+        to: 'saxarubra915@gmail.com',
+        subject: 'Richiesta di autorizzazione scambio turno',
+        html: `<b>Richiesta scambio turno</b><br>Dettagli: ${JSON.stringify(shift)}`,
+      };
 
-        const fromShiftIndex = matrix[0].findIndex(s => s === fromShift);
-        if (fromShiftIndex === 0) {
-          setError('Non è possibile scambiare i turni della prima colonna');
-          return;
-        }
+      const response = await fetch('/api/send-swap-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(swapData),
+      });
+
+      if (!response.ok) {
+        throw new Error('Errore nell\'invio dell\'email');
       }
 
-      const formattedDate = fromDate.split('/').reverse().join('-');
-      console.log('Data formattata:', formattedDate);
-
-      const { data, error: insertError } = await supabase
-        .from('shift_swaps')
-        .insert({
-          date: formattedDate,
-          from_employee: fromEmployee,
-          to_employee: toEmployee,
-          from_shift: fromShift,
-          to_shift: toShift,
-          status: 'pending' // Sempre in pending, anche per gli admin
-        })
-        .select()
-        .single();
-
-      if (insertError) {
-        console.error('Errore durante l\'inserimento:', insertError);
-        throw insertError;
-      }
-      
-      console.log('Scambio creato con successo:', data);
-      
-      // Se lo scambio è in stato pending, invia l'email
-      if (data && data.status === 'pending') {
-        console.log('Invio email per scambio in pending:', data.id);
-        try {
-          const html = `<b>Richiesta scambio turno</b><br>Richiedente: ${data.from_employee}<br>Turno richiesto: ${data.to_shift}<br>Dipendente richiesto: ${data.to_employee}<br>Turno offerto: ${data.from_shift}<br>ID scambio: ${data.id}`;
-          const result = await sendGmailEmail({
-            to: 'saxarubra915@gmail.com',
-            subject: 'Richiesta di autorizzazione scambio turno',
-            html,
-          });
-          console.log('Risultato invio email:', result);
-          if (result.messageId) {
-            console.log('Email inviata con successo per lo scambio:', data.id);
-          } else {
-            console.error('Errore nell\'invio dell\'email per lo scambio:', data.id, result.error);
-          }
-        } catch (error) {
-          console.error('Errore durante l\'invio dell\'email per lo scambio:', data.id, error);
-        }
-      }
-      
-      await loadSwaps();
-      if (isAdmin) {
-        await loadMatrix(currentWeekStart);
-      }
-
-    } catch (err) {
-      console.error('Errore nella creazione della richiesta di scambio:', err);
-      setError('Errore nella creazione della richiesta di scambio: ' + (err as Error).message);
-    } finally {
-      setIsLoading(false);
+      console.log('Email inviata con successo');
+    } catch (error) {
+      console.error('Errore nell\'invio dell\'email:', error);
     }
   };
 
@@ -600,21 +548,8 @@ export default function ShiftList({ initialDate }: { initialDate?: string | null
       // Se lo scambio è in stato pending, invia l'email
       if (data && data.status === 'pending') {
         console.log('Invio email per scambio in pending:', data.id);
-        try {
-          const html = `<b>Richiesta scambio turno</b><br>Richiedente: ${data.from_employee}<br>Turno richiesto: ${data.to_shift}<br>Dipendente richiesto: ${data.to_employee}<br>Turno offerto: ${data.from_shift}<br>ID scambio: ${data.id}`;
-          const result = await sendGmailEmail({
-            to: 'saxarubra915@gmail.com',
-            subject: 'Richiesta di autorizzazione scambio turno',
-            html,
-          });
-          if (result.messageId) {
-            console.log('Email inviata con successo per lo scambio:', data.id);
-          } else {
-            console.error('Errore nell\'invio dell\'email per lo scambio:', data.id, result.error);
-          }
-        } catch (error) {
-          console.error('Errore durante l\'invio dell\'email per lo scambio:', data.id, error);
-        }
+        await handleSwapRequest(data.id);
+        console.log('Email inviata con successo per lo scambio:', data.id);
       }
       
       await loadSwaps();

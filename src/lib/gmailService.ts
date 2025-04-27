@@ -1,3 +1,6 @@
+// L'invio email ora avviene solo tramite la serverless function /api/send-swap-email.js
+// Questo file è stato lasciato vuoto per evitare errori di import lato frontend.
+
 import nodemailer from 'nodemailer';
 
 export interface GmailEmailData {
