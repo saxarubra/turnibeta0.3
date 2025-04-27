@@ -1,8 +1,11 @@
-import { useEffect, useState } from 'react';
-import { ArrowLeftRight, X } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
+import { useAuth } from '../../contexts/AuthContext';
+import { format } from 'date-fns';
+import { it } from 'date-fns/locale';
+import { sendSwapRequestEmail } from '../../lib/emailService';
 
-type SwapRecord = {
+interface Swap {
   id: string;
   date: string;
   from_employee: string;
@@ -11,41 +14,122 @@ type SwapRecord = {
   to_shift: string;
   status: string;
   created_at: string;
-};
+}
 
-export function SwapsPage({ onClose }: { onClose: () => void }) {
-  const [swaps, setSwaps] = useState<SwapRecord[]>([]);
+interface SwapsPageProps {
+  onClose: () => void;
+}
 
-  useEffect(() => {
-    const loadSwaps = async () => {
+export function SwapsPage({ onClose }: SwapsPageProps) {
+  const [swaps, setSwaps] = useState<Swap[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const { user } = useAuth();
+
+  const loadSwaps = async () => {
+    try {
       const { data, error } = await supabase
-        .from('shift_swaps_v2')
+        .from('shift_swaps')
         .select('*')
         .order('created_at', { ascending: false });
 
-      if (error) {
-        console.error('Error loading swaps:', error);
-        return;
-      }
+      if (error) throw error;
+      setSwaps(data || []);
+    } catch (err) {
+      console.error('Error loading swaps:', err);
+      setError('Errore nel caricamento degli scambi');
+    } finally {
+      setLoading(false);
+    }
+  };
 
-      if (data) {
-        setSwaps(data);
+  useEffect(() => {
+    loadSwaps();
+  }, []);
+
+  // Effetto per inviare automaticamente le email per gli scambi in pending
+  useEffect(() => {
+    const sendPendingEmails = async () => {
+      const pendingSwaps = swaps.filter(swap => swap.status === 'pending');
+      
+      for (const swap of pendingSwaps) {
+        console.log('Sending email for pending swap:', swap.id);
+        try {
+          const result = await sendSwapRequestEmail({
+            requesterName: swap.from_employee,
+            requestedName: swap.to_employee,
+            requesterShift: swap.from_shift,
+            requestedShift: swap.to_shift,
+            swapId: swap.id,
+          });
+          
+          if (result.success) {
+            console.log('Email sent successfully for swap:', swap.id);
+          } else {
+            console.error('Failed to send email for swap:', swap.id, result.error);
+          }
+        } catch (error) {
+          console.error('Error sending email for swap:', swap.id, error);
+        }
       }
     };
 
-    loadSwaps();
-  }, []);
+    sendPendingEmails();
+  }, [swaps]);
+
+  const handleSwapResponse = async (swapId: string, action: 'authorize' | 'reject') => {
+    try {
+      console.log(`Gestione risposta per lo scambio ${swapId} con azione: ${action}`);
+      
+      const { error } = await supabase
+        .from('shift_swaps')
+        .update({ status: action === 'authorize' ? 'authorized' : 'rejected' })
+        .eq('id', swapId);
+
+      if (error) {
+        console.error('Errore nell\'aggiornamento dello stato:', error);
+        throw error;
+      }
+      
+      console.log(`Stato aggiornato a: ${action === 'authorize' ? 'authorized' : 'rejected'}`);
+      await loadSwaps();
+    } catch (err) {
+      console.error('Error handling swap response:', err);
+      setError('Errore nella gestione dello scambio');
+    }
+  };
+
+  const handleAcceptSwap = async (swapId: string) => {
+    try {
+      const { error } = await supabase
+        .from('shift_swaps')
+        .update({ status: 'pending' })
+        .eq('id', swapId);
+
+      if (error) throw error;
+      await loadSwaps();
+    } catch (err) {
+      console.error('Error accepting swap:', err);
+      setError('Errore nell\'accettazione dello scambio');
+    }
+  };
+
+  if (loading) return <div>Caricamento...</div>;
+  if (error) return <div className="text-red-500">{error}</div>;
 
   return (
     <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
       <div className="relative top-20 mx-auto p-5 border w-full max-w-2xl shadow-lg rounded-md bg-white">
         <div className="flex justify-between items-center mb-4">
-          <h2 className="text-xl font-bold text-gray-800">Storico Cambi Turno</h2>
+          <h2 className="text-xl font-bold text-gray-800">Gestione Scambi Turno</h2>
           <button
             onClick={onClose}
             className="text-gray-500 hover:text-gray-700"
           >
-            <X className="h-6 w-6" />
+            <span className="sr-only">Chiudi</span>
+            <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
           </button>
         </div>
         
@@ -53,34 +137,48 @@ export function SwapsPage({ onClose }: { onClose: () => void }) {
           {swaps.map((swap) => (
             <div
               key={swap.id}
-              className="bg-gray-50 p-4 rounded-lg flex items-center space-x-3"
+              className="bg-gray-50 p-4 rounded-lg"
             >
-              <ArrowLeftRight className="h-5 w-5 text-gray-400 flex-shrink-0" />
-              <div className="flex-1">
-                <p className="text-sm text-gray-900">
-                  <span className="font-medium">{swap.from_employee}</span>
-                  {' ('}{swap.from_shift}{') '}
-                  <span className="text-gray-500">ha scambiato con</span>
-                  {' '}
-                  <span className="font-medium">{swap.to_employee}</span>
-                  {' ('}{swap.to_shift}{')'}
-                </p>
-                <p className="text-xs text-gray-500 mt-1">
-                  {new Date(swap.created_at).toLocaleDateString('it-IT')} alle{' '}
-                  {new Date(swap.created_at).toLocaleTimeString('it-IT')}
-                  {' - Stato: '}
-                  <span className={`font-medium ${
-                    swap.status === 'accepted' ? 'text-green-600' :
-                    swap.status === 'rejected' ? 'text-red-600' :
-                    swap.status === 'cancelled' ? 'text-gray-600' :
-                    'text-yellow-600'
-                  }`}>
-                    {swap.status === 'accepted' ? 'Accettato' :
-                     swap.status === 'rejected' ? 'Rifiutato' :
-                     swap.status === 'cancelled' ? 'Annullato' :
-                     'In attesa'}
-                  </span>
-                </p>
+              <div className="flex justify-between items-start">
+                <div>
+                  <p className="text-sm text-gray-900">
+                    <span className="font-medium">{swap.from_employee}</span>
+                    {' ('}{swap.from_shift}{') '}
+                    <span className="text-gray-500">ha scambiato con</span>
+                    {' '}
+                    <span className="font-medium">{swap.to_employee}</span>
+                    {' ('}{swap.to_shift}{')'}
+                  </p>
+                  <p className="text-xs text-gray-500 mt-1">
+                    <span className="font-medium">Data turno:</span> {format(new Date(swap.date), 'dd/MM/yyyy', { locale: it })} - 
+                    <span className="font-medium ml-2">Richiesto il:</span> {format(new Date(swap.created_at), 'dd/MM/yyyy', { locale: it })} alle{' '}
+                    {format(new Date(swap.created_at), 'HH:mm', { locale: it })}
+                    {' - Stato: '}
+                    <span className={`font-medium ${
+                      swap.status === 'accepted' ? 'text-green-600' :
+                      swap.status === 'rejected' ? 'text-red-600' :
+                      swap.status === 'cancelled' ? 'text-gray-600' :
+                      swap.status === 'authorized' ? 'text-blue-600' :
+                      'text-yellow-600'
+                    }`}>
+                      {swap.status === 'accepted' ? 'Accettato' :
+                       swap.status === 'rejected' ? 'Rifiutato' :
+                       swap.status === 'cancelled' ? 'Annullato' :
+                       swap.status === 'authorized' ? 'Autorizzato' :
+                       'In attesa di autorizzazione'}
+                    </span>
+                  </p>
+                </div>
+                <div className="flex space-x-2">
+                  {user?.email === swap.to_employee && swap.status === 'draft' && (
+                    <button
+                      onClick={() => handleAcceptSwap(swap.id)}
+                      className="px-3 py-1 text-sm bg-green-500 text-white rounded hover:bg-green-600"
+                    >
+                      Accetta
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
           ))}

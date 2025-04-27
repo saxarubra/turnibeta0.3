@@ -319,3 +319,32 @@ export const Constants = {
     Enums: {},
   },
 } as const
+
+export interface Notification {
+  id: string;
+  user_id: string;
+  message: string;
+  type: string;
+  read: boolean;
+  created_at: string;
+  shift_swaps?: {
+    id: string;
+    status: string;
+    from_employee: string;
+    to_employee: string;
+    from_shift: string;
+    to_shift: string;
+    date: string;
+  };
+}
+
+export interface SwapRecord {
+  id: string;
+  date: string;
+  from_employee: string;
+  to_employee: string;
+  from_shift: string;
+  to_shift: string;
+  status: string;
+  created_at: string;
+}

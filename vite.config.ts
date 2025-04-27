@@ -26,12 +26,13 @@ export default defineConfig({
     }
   },
   server: {
-    port: 5173,
+    port: 5174,
     host: true,
     strictPort: true,
     open: true
   },
   build: {
+    outDir: 'dist',
     sourcemap: true,
     commonjsOptions: {
       include: [/lucide-react/, /node_modules/]

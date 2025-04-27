@@ -1,11 +1,17 @@
 import React, { useState, useEffect } from 'react';
-import { useAuth } from './contexts/AuthContext';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
+import Login from './components/auth/Login';
+import Register from './components/auth/Register';
+import ShiftList from './components/shifts/ShiftList';
+import { SwapsPage } from './components/shifts/SwapsPage';
+import TopBar from './components/layout/TopBar';
+import './App.css';
 import { LoginForm } from './components/auth/LoginForm';
 import { SignUpForm } from './components/auth/SignUpForm';
 import { PasswordResetForm } from './components/auth/PasswordResetForm';
-import ShiftList from './components/shifts/ShiftList';
 import { MatrixUploader } from './components/shifts/MatrixUploader';
-import { LogOut, User, RefreshCw } from './lib/icons';
+import { LogOut, User, RefreshCw, ArrowLeftRight } from './lib/icons';
 import { supabase } from './lib/supabase';
 import Notifications from './components/Notifications';
 import { AdminSetup } from './components/admin/AdminSetup';
@@ -17,6 +23,7 @@ export default function App() {
   const [currentWeekStart, setCurrentWeekStart] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showSwapsPage, setShowSwapsPage] = useState(false);
 
   useEffect(() => {
     checkAdminStatus();
@@ -132,6 +139,13 @@ export default function App() {
           <div className="flex justify-between items-center">
             <h1 className="text-xl font-semibold text-gray-900">Shift Management</h1>
             <div className="flex items-center space-x-4">
+              <button
+                onClick={() => setShowSwapsPage(true)}
+                className="flex items-center space-x-2 px-3 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600"
+              >
+                <ArrowLeftRight className="h-4 w-4" />
+                <span>Scambi Turno</span>
+              </button>
               <div className="flex items-center space-x-2 px-3 py-2 bg-indigo-50 rounded-md">
                 <User className="h-4 w-4 text-indigo-500" />
                 <span className="text-sm font-medium text-indigo-700">{user.user_metadata.full_name}</span>
@@ -219,6 +233,9 @@ export default function App() {
           </div>
         )}
       </main>
+      {showSwapsPage && (
+        <SwapsPage onClose={() => setShowSwapsPage(false)} />
+      )}
     </div>
   );
 }

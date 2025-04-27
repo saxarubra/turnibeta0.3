@@ -42,28 +42,28 @@ export function NotificationBell() {
   }, [user]);
 
   const loadNotifications = async () => {
-    if (!user) return;
+    try {
+      const { data, error } = await supabase
+        .from('notifications')
+        .select(`
+          *,
+          shift_swaps (
+            id,
+            status,
+            from_employee,
+            to_employee,
+            from_shift,
+            to_shift,
+            date
+          )
+        `)
+        .order('created_at', { ascending: false });
 
-    const { data } = await supabase
-      .from('notifications')
-      .select(`
-        *,
-        shift_swaps_v2 (
-          id,
-          date,
-          from_employee,
-          to_employee,
-          from_shift,
-          to_shift,
-          status
-        )
-      `)
-      .eq('user_id', user.id)
-      .order('created_at', { ascending: false });
-
-    if (data) {
-      setNotifications(data);
+      if (error) throw error;
+      setNotifications(data || []);
       setUnreadCount(data.filter(n => !n.read).length);
+    } catch (err) {
+      console.error('Error loading notifications:', err);
     }
   };
 
@@ -80,15 +80,17 @@ export function NotificationBell() {
   };
 
   const handleSwapResponse = async (swapId: string, accept: boolean) => {
-    const status = accept ? 'accepted' : 'rejected';
-    
-    await supabase
-      .from('shift_swaps_v2')
-      .update({ status })
-      .eq('id', swapId);
+    try {
+      const { error } = await supabase
+        .from('shift_swaps')
+        .update({ status: accept ? 'accepted' : 'rejected' })
+        .eq('id', swapId);
 
-    // Ricarica le notifiche per aggiornare lo stato
-    loadNotifications();
+      if (error) throw error;
+      await loadNotifications();
+    } catch (err) {
+      console.error('Error handling swap response:', err);
+    }
   };
 
   const isSwapRequest = (notification: Notification) => {
@@ -96,7 +98,7 @@ export function NotificationBell() {
   };
 
   const isPendingSwap = (notification: Notification) => {
-    return notification.shift_swaps_v2?.status === 'pending';
+    return notification.shift_swaps?.status === 'pending';
   };
 
   return (
@@ -141,14 +143,14 @@ export function NotificationBell() {
                     {isSwapRequest(notification) && isPendingSwap(notification) && (
                       <div className="flex gap-2 ml-4">
                         <button
-                          onClick={() => handleSwapResponse(notification.shift_swaps_v2.id, true)}
+                          onClick={() => handleSwapResponse(notification.shift_swaps.id, true)}
                           className="p-1 text-green-600 hover:bg-green-50 rounded"
                           title="Accetta scambio"
                         >
                           <Check className="h-5 w-5" />
                         </button>
                         <button
-                          onClick={() => handleSwapResponse(notification.shift_swaps_v2.id, false)}
+                          onClick={() => handleSwapResponse(notification.shift_swaps.id, false)}
                           className="p-1 text-red-600 hover:bg-red-50 rounded"
                           title="Rifiuta scambio"
                         >

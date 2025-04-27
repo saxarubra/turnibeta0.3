@@ -5,6 +5,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import PDFExport from './PDFExport';
 import { PDFDocument } from 'pdf-lib';
 import { format, addDays } from 'date-fns';
+import { sendGmailEmail } from '../../lib/gmailService';
 
 type Matrix = string[][];
 type SwapRequest = {
@@ -182,17 +183,8 @@ export default function ShiftList({ initialDate }: { initialDate?: string | null
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-
       if (data) {
-        const uniqueSwaps = data.reduce<Record<string, any>>((acc, swap) => {
-          const key = `${swap.date}-${swap.from_employee}-${swap.to_employee}`;
-          if (!acc[key]) {
-            acc[key] = swap;
-          }
-          return acc;
-        }, {});
-
-        setSwaps(Object.values(uniqueSwaps).map(swap => ({
+        setSwaps(data.map(swap => ({
           id: swap.id,
           date: swap.date,
           fromEmployee: swap.from_employee,
@@ -403,6 +395,7 @@ export default function ShiftList({ initialDate }: { initialDate?: string | null
     try {
       setIsLoading(true);
       setError(null);
+      console.log('Iniziando richiesta di scambio:', { fromDate, fromEmployee, toEmployee, fromShift, toShift });
 
       if (!isAdmin) {
         if (fromShift === 'RI' || fromShift === 'NL' || toShift === 'RI' || toShift === 'NL') {
@@ -417,26 +410,58 @@ export default function ShiftList({ initialDate }: { initialDate?: string | null
         }
       }
 
-      const { error: insertError } = await supabase
+      const formattedDate = fromDate.split('/').reverse().join('-');
+      console.log('Data formattata:', formattedDate);
+
+      const { data, error: insertError } = await supabase
         .from('shift_swaps')
         .insert({
-          date: fromDate.split('/').reverse().join('-'),
+          date: formattedDate,
           from_employee: fromEmployee,
           to_employee: toEmployee,
           from_shift: fromShift,
           to_shift: toShift,
-          status: isAdmin ? 'accepted' : 'pending'
-        });
+          status: 'pending' // Sempre in pending, anche per gli admin
+        })
+        .select()
+        .single();
 
-      if (insertError) throw insertError;
+      if (insertError) {
+        console.error('Errore durante l\'inserimento:', insertError);
+        throw insertError;
+      }
+      
+      console.log('Scambio creato con successo:', data);
+      
+      // Se lo scambio è in stato pending, invia l'email
+      if (data && data.status === 'pending') {
+        console.log('Invio email per scambio in pending:', data.id);
+        try {
+          const html = `<b>Richiesta scambio turno</b><br>Richiedente: ${data.from_employee}<br>Turno richiesto: ${data.to_shift}<br>Dipendente richiesto: ${data.to_employee}<br>Turno offerto: ${data.from_shift}<br>ID scambio: ${data.id}`;
+          const result = await sendGmailEmail({
+            to: 'saxarubra915@gmail.com',
+            subject: 'Richiesta di autorizzazione scambio turno',
+            html,
+          });
+          console.log('Risultato invio email:', result);
+          if (result.messageId) {
+            console.log('Email inviata con successo per lo scambio:', data.id);
+          } else {
+            console.error('Errore nell\'invio dell\'email per lo scambio:', data.id, result.error);
+          }
+        } catch (error) {
+          console.error('Errore durante l\'invio dell\'email per lo scambio:', data.id, error);
+        }
+      }
+      
       await loadSwaps();
       if (isAdmin) {
         await loadMatrix(currentWeekStart);
       }
 
     } catch (err) {
-      console.error('Error creating swap request:', err);
-      setError('Errore nella creazione della richiesta di scambio');
+      console.error('Errore nella creazione della richiesta di scambio:', err);
+      setError('Errore nella creazione della richiesta di scambio: ' + (err as Error).message);
     } finally {
       setIsLoading(false);
     }
@@ -448,32 +473,22 @@ export default function ShiftList({ initialDate }: { initialDate?: string | null
       setIsLoading(true);
       setError(null);
       const swap = swaps.find(s => s.id === swapId);
-      if (!swap) return;
-      if (!isAdmin && swap.toEmployee !== currentEmployeeCode) {
-        setError('Non autorizzato a rispondere a questa richiesta');
+      if (!swap) {
+        setError('Scambio non trovato');
         return;
       }
-      if (accept) {
-        const hasEnoughRestFrom = checkRestTime(swap.fromEmployee, swap.date, swap.toShift);
-        const hasEnoughRestTo = checkRestTime(swap.toEmployee, swap.date, swap.fromShift);
-        if (!hasEnoughRestFrom || !hasEnoughRestTo) {
-          setError('Non è possibile accettare lo scambio: non rispetta il minimo di 11 ore di stacco tra turni');
-          setIsLoading(false);
-          return;
-        }
-      }
+
       const { error: updateError } = await supabase
         .from('shift_swaps')
         .update({ status: accept ? 'accepted' : 'rejected' })
         .eq('id', swapId);
+
       if (updateError) throw updateError;
       await loadSwaps();
-      if (accept) {
-        await loadMatrix(currentWeekStart);
-      }
+      await loadMatrix(currentWeekStart);
     } catch (err) {
-      console.error('Error updating swap:', err);
-      setError('Errore nell\'aggiornamento della richiesta di scambio');
+      console.error('Error handling swap response:', err);
+      setError('Errore nella gestione della risposta');
     } finally {
       setIsLoading(false);
     }
@@ -481,9 +496,9 @@ export default function ShiftList({ initialDate }: { initialDate?: string | null
 
   const handleCancelSwap = async (swapId: string) => {
     if (isLoading) return;
-
     try {
       setIsLoading(true);
+      setError(null);
 
       const { error: updateError } = await supabase
         .from('shift_swaps')
@@ -492,8 +507,10 @@ export default function ShiftList({ initialDate }: { initialDate?: string | null
 
       if (updateError) throw updateError;
       await loadSwaps();
+      await loadMatrix(currentWeekStart);
     } catch (err) {
       console.error('Error cancelling swap:', err);
+      setError('Errore nella cancellazione dello scambio');
     } finally {
       setIsLoading(false);
     }
@@ -555,24 +572,56 @@ export default function ShiftList({ initialDate }: { initialDate?: string | null
     try {
       setIsLoading(true);
       setError(null);
+      console.log('Creazione richiesta di scambio:', { date, fromEmployee, toEmployee, fromShift, toShift, autoAccept });
 
-      const { error: insertError } = await supabase
+      const formattedDate = date.split('/').reverse().join('-');
+      console.log('Data formattata:', formattedDate);
+
+      const { data, error: insertError } = await supabase
         .from('shift_swaps')
         .insert({
-          date: date.split('/').reverse().join('-'),
+          date: formattedDate,
           from_employee: fromEmployee,
           to_employee: toEmployee,
           from_shift: fromShift,
           to_shift: toShift,
           status: autoAccept ? 'accepted' : 'pending'
-        });
+        })
+        .select()
+        .single();
 
-      if (insertError) throw insertError;
+      if (insertError) {
+        console.error('Errore durante l\'inserimento:', insertError);
+        throw insertError;
+      }
+      
+      console.log('Scambio creato con successo:', data);
+      
+      // Se lo scambio è in stato pending, invia l'email
+      if (data && data.status === 'pending') {
+        console.log('Invio email per scambio in pending:', data.id);
+        try {
+          const html = `<b>Richiesta scambio turno</b><br>Richiedente: ${data.from_employee}<br>Turno richiesto: ${data.to_shift}<br>Dipendente richiesto: ${data.to_employee}<br>Turno offerto: ${data.from_shift}<br>ID scambio: ${data.id}`;
+          const result = await sendGmailEmail({
+            to: 'saxarubra915@gmail.com',
+            subject: 'Richiesta di autorizzazione scambio turno',
+            html,
+          });
+          if (result.messageId) {
+            console.log('Email inviata con successo per lo scambio:', data.id);
+          } else {
+            console.error('Errore nell\'invio dell\'email per lo scambio:', data.id, result.error);
+          }
+        } catch (error) {
+          console.error('Errore durante l\'invio dell\'email per lo scambio:', data.id, error);
+        }
+      }
+      
       await loadSwaps();
       
     } catch (err) {
-      console.error('Error creating swap request:', err);
-      setError('Errore nella creazione della richiesta di scambio');
+      console.error('Errore nella creazione della richiesta di scambio:', err);
+      setError('Errore nella creazione della richiesta di scambio: ' + (err as Error).message);
     } finally {
       setIsLoading(false);
     }
